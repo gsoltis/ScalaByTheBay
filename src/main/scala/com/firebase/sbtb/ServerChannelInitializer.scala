@@ -18,9 +18,10 @@ object ServerChannelInitializer extends ChannelInitializer[SocketChannel] {
     pipeline.addLast("http-chunk-aggregator", new HttpObjectAggregator(MAX_HTTP_CHUNK_SIZE))
 
     // Outbound
-    pipeline.addLast("http-encoder", new HttpResponseEncoder())
+    // Note that the websocket handshaker will remove this
+    pipeline.addLast("http-encoder", new HttpResponseEncoder)
 
-    // Our handler
-    pipeline.addLast("our-app", SocialLocalWeatherApp)
+    // Our handlers
+    pipeline.addLast("protocol-chooser", ProtocolChooser)
   }
 }

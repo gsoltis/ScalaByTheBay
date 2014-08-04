@@ -1,86 +1,69 @@
 package com.firebase.sbtb
 
-import io.netty.channel.{ChannelHandlerContext, SimpleChannelInboundHandler}
-import io.netty.handler.codec.http._
-import io.netty.channel.ChannelHandler.Sharable
-import io.netty.util.CharsetUtil
-import io.netty.buffer.ByteBufUtil
-import java.nio.CharBuffer
+import scala.collection.mutable
 
-@Sharable
-object SocialLocalWeatherApp extends SimpleChannelInboundHandler[FullHttpRequest] {
+case class MarketingStats(reads: Int, writes: Int)
 
-  val SOMA_METHODS = Set(HttpMethod.POST, HttpMethod.GET)
+trait FoggyStateReceiver {
+  def sendIsFoggy(isFoggy: Boolean)
+}
+
+object SocialLocalWeatherApp {
 
   var isFoggy = false
   var readCount = 0
   var writeCount = 0
 
-  private def somaIsFoggy(ctx: ChannelHandlerContext, msg: FullHttpRequest): HttpResponse = {
-    val method = msg.getMethod
-    if (SOMA_METHODS contains method) {
-      val booleanResult = if (method == HttpMethod.POST) {
-        val newFoggyState = msg.content().toString(CharsetUtil.UTF_8).toBoolean
-        synchronized {
-          readCount += 1
-          writeCount += 1
-          isFoggy = newFoggyState
-          isFoggy
-        }
-      } else {
-        synchronized {
-          readCount += 1
-          isFoggy
-        }
+  private val receivers = new mutable.HashSet[FoggyStateReceiver] with mutable.SynchronizedSet[FoggyStateReceiver]
+
+  def setFoggy(foggy: Boolean): Boolean = {
+    synchronized {
+      val oldFoggyState = isFoggy
+      isFoggy = foggy
+      logRead()
+      logWrite()
+      if (foggy != oldFoggyState) {
+        // Only broadcast on changes
+        val broadcastCount = (receivers map { case receiver: FoggyStateReceiver =>
+          receiver.sendIsFoggy(isFoggy)
+          1
+        }).sum
+        // Log the number of sends we did. Do it as we send so we avoid accounting errors with receivers being added
+        // or removed at the same time.
+        readCount += broadcastCount
       }
-      getBooleanResponse(booleanResult, ctx)
-    } else {
-      get405Response
+      isFoggy
     }
   }
 
-  private def marketingStats(ctx: ChannelHandlerContext, msg: HttpRequest): HttpResponse = {
-    if (msg.getMethod == HttpMethod.GET) {
-      val result = synchronized {
-        s"reads: $readCount\nwrites: $writeCount"
-      }
-      getStringResponse(result, ctx)
-    } else {
-      get405Response
+  def getFoggy: Boolean = {
+    synchronized {
+      logRead()
+      isFoggy
     }
   }
 
-  def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpRequest) {
-    val response = if (msg.getUri == "/somaIsFoggy") {
-      somaIsFoggy(ctx, msg)
-    } else if (msg.getUri == "/marketingStats") {
-      marketingStats(ctx, msg)
-    } else {
-      get404Response
+  def getMarketingStats: MarketingStats = {
+    synchronized {
+      MarketingStats(readCount, writeCount)
     }
-    ctx.writeAndFlush(response)
   }
 
-  def getBooleanResponse(bool: Boolean, ctx: ChannelHandlerContext): HttpResponse = {
-    getStringResponse(bool.toString, ctx)
+  def registerBroadcastReceiver(receiver: FoggyStateReceiver) {
+    receivers += receiver
+    receiver.sendIsFoggy(getFoggy)
   }
 
-  def getStringResponse(str: String, ctx: ChannelHandlerContext): HttpResponse = {
-    val buf = ByteBufUtil.encodeString(ctx.alloc(), CharBuffer.wrap(str), CharsetUtil.UTF_8)
-    val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, buf)
-    response.headers().set(HttpHeaders.Names.CONTENT_LENGTH, buf.readableBytes())
-    response
+  def deregisterBroadcastReceiver(receiver: FoggyStateReceiver) {
+    receivers -= receiver
   }
 
-  def get404Response: HttpResponse = {
-    val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND)
-    response.headers().set(HttpHeaders.Names.CONTENT_LENGTH, 0)
-    response
+  private def logWrite() {
+    writeCount += 1
   }
 
-  def get405Response: HttpResponse = {
-    val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.BAD_REQUEST)
-    response.headers().set(HttpHeaders.Names.CONTENT_LENGTH, 0)
-    response
+  private def logRead() {
+    readCount += 1
   }
+
 }
