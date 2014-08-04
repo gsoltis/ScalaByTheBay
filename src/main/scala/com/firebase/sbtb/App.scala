@@ -18,8 +18,10 @@ object App {
     val bossThreadGroupSize = 1
     val bossThreadGroup = new NioEventLoopGroup(bossThreadGroupSize)
 
+    val workerThreadGroupSize = 16
+    val workerThreadGroup = new NioEventLoopGroup(workerThreadGroupSize)
     val server = new ServerBootstrap
-    server.group(bossThreadGroup)
+    server.group(bossThreadGroup, workerThreadGroup)
     server.channel(classOf[NioServerSocketChannel])
     // This object will initialize the pipeline for each new channel
     server.childHandler(ServerChannelInitializer)
