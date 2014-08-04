@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title></title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+  <script src="js/sbtb.js"></script>
+</head>
+<body>
+  <span>
+    <label for="is-foggy">Foggy state:</label>
+    <input id="is-foggy" type="checkbox">
+    <button id="set-state">Set Foggy State</button>
+  </span>
+  <p>Logs:</p>
+  <ul id="log">
+
+  </ul>
+  <script type="text/javascript">
+    var log = function(msg) {
+      var toLog = new Date().toString() + ': ' + msg;
+      $('#log').append('<li>' + toLog + '</li>');
+    };
+
+    var ws = new WebsocketConnection(
+            "ws://localhost:9002/.ws",
+            function() {
+              log('Connection opened');
+            },
+            function(msg) {
+              var prefix = "foggy:";
+              var isFoggy = msg.substring(prefix.length) === 'true';
+              if (isFoggy) {
+                log("It's foggy!");
+              } else {
+                log("It's not foggy");
+              }
+            },
+            function() {
+              log('Connection closed');
+            },
+            function(err) {
+              log('Connection error: ' + err);
+            }
+    );
+
+    $(function() {
+      $('#set-state').on('click', function() {
+        var toSet = $('#is-foggy').is(':checked');
+        log('Setting foggy: ' + toSet);
+        ws.send('setFoggy:' + toSet);
+      });
+    });
+  </script>
+</body>
+</html>
