@@ -6,45 +6,63 @@ import io.netty.util.CharsetUtil
 import io.netty.buffer.ByteBufUtil
 import java.nio.CharBuffer
 import io.netty.channel.ChannelHandler.Sharable
+import akka.actor.ActorRef
+import scala.concurrent.Future
+import scala.util.{Failure, Success}
+import akka.pattern.ask
 
 @Sharable
 object HttpHandler extends SimpleChannelInboundHandler[FullHttpRequest] {
 
+  private implicit val timeout = ApplicationCache.timeout
   val SOMA_METHODS = Set(HttpMethod.POST, HttpMethod.GET)
 
-  private def runApp(app: BooleanSyncApp, ctx: ChannelHandlerContext, msg: FullHttpRequest): HttpResponse = {
+  private def runApp(app: ActorRef, ctx: ChannelHandlerContext, msg: FullHttpRequest)
+                    (implicit executor: NettyExecutionContext): Future[HttpResponse] = {
     val method = msg.getMethod
     // In a more sophisticated application, you'll likely want to do some better http route and error handling.
     if (SOMA_METHODS contains method) {
       if (msg.getUri endsWith "marketingStats") {
-        val stats = app.getAppStats
-        val result = s"reads: ${stats.reads}\nwrites: ${stats.writes}"
-        getStringResponse(result, ctx)
-      } else {
-        val booleanResult = if (method == HttpMethod.POST) {
-          val newState = msg.content().toString(CharsetUtil.UTF_8).toBoolean
-          app.setCurrentState(newState)
-        } else {
-          app.getCurrentState
+        (app ? GetStats).mapTo[BooleanSyncAppStats] map {
+          case stats => getStringResponse(s"reads: ${stats.reads}\nwrites: ${stats.writes}", ctx)
         }
-        getBooleanResponse(booleanResult, ctx)
+      } else {
+        val future = if (method == HttpMethod.POST) {
+          val newState = msg.content().toString(CharsetUtil.UTF_8).toBoolean
+          app ? SetState(newState)
+        } else {
+          app ? GetState
+        }
+        future.mapTo[Boolean] map { getBooleanResponse(_, ctx) }
       }
     } else {
-      get405Response
+      Future.successful { get405Response }
     }
   }
 
   def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpRequest) {
-    val response = msg.getUri.split("/").toList match {
+    implicit val executor = new NettyExecutionContext(ctx)
+    val responseFuture = msg.getUri.split("/").toList match {
       case "" :: appName :: tail => {
-        ApplicationCache.getOrLookup[BooleanSyncApp](appName) match {
+        ApplicationCache.getOrLookup(appName) match {
           case Some(app) => runApp(app, ctx, msg)
-          case None => get404Response
+          case None => Future.successful { get404Response }
         }
       }
-      case _ => get404Response
+      case _ => Future.successful { get404Response }
     }
-    ctx.writeAndFlush(response)
+    responseFuture onComplete {
+      case Success(response) => ctx.writeAndFlush(response)
+      case Failure(throwable) => ctx.writeAndFlush(get500Response(throwable, ctx))
+    }
+
+  }
+
+  def get500Response(throwable: Throwable, ctx: ChannelHandlerContext): HttpResponse = {
+    val buf = ByteBufUtil.encodeString(ctx.alloc(), CharBuffer.wrap("INTERNAL SERVER ERROR"), CharsetUtil.UTF_8)
+    val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, buf)
+    response.headers().set(HttpHeaders.Names.CONTENT_LENGTH, buf.readableBytes())
+    response
   }
 
   def getBooleanResponse(bool: Boolean, ctx: ChannelHandlerContext): HttpResponse = {

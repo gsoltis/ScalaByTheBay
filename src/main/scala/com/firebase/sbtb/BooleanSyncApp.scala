@@ -1,37 +1,54 @@
 package com.firebase.sbtb
 
 import scala.collection.mutable
+import akka.actor.{ActorRef, Actor}
 
 case class BooleanSyncAppStats(reads: Int, writes: Int)
 
-trait BooleanSyncApp {
+class BooleanSyncApp extends Actor {
 
   private var currentState: Boolean = false
   private var readCount = 0
   private var writeCount = 0
-  private val receivers = new mutable.HashSet[BooleanStateReceiver] with mutable.SynchronizedSet[BooleanStateReceiver]
+  private val receivers = new mutable.HashSet[BooleanStateReceiver]
 
-  def getCurrentState: Boolean = {
-    synchronized {
-      logRead()
-      currentState
+  def receive = {
+    case msg: BooleanSyncAppMessage => {
+      // We're using a sealed trait, we can prove this is an exhaustive match
+      msg match {
+        case GetState => sendState(sender())
+        case SetState(newState) => {
+          setState(newState)
+          sendState(sender())
+        }
+        case GetStats => sendAppStats(sender())
+        case AddListener(listener) => registerBroadcastReceiver(listener)
+        case RemoveListener(listener) => deregisterBroadcastReceiver(listener)
+      }
     }
+    case other => handleUnknownMessage(other)
   }
 
-  def setCurrentState(newState: Boolean): Boolean = {
-    synchronized {
-      logRead()
-      logWrite()
-      val oldState = currentState
+  protected def handleUnknownMessage(msg: Any) {
+    // No-op. This could be a hook for customized versions of this app though. Or, they could 'become' a new version of
+    // this app.
+  }
+
+  private def sendState(recipient: ActorRef) {
+    logRead()
+    recipient ! currentState
+  }
+
+  private def sendState(recipient: BooleanStateReceiver) {
+    logRead()
+    recipient.sendNewState(currentState)
+  }
+
+  private def setState(newState: Boolean) {
+    logWrite()
+    if (newState != currentState) {
       currentState = newState
-      if (currentState != oldState) {
-        // Only broadcast on changes
-        receivers foreach { case receiver: BooleanStateReceiver =>
-          receiver.sendNewState(currentState)
-          logRead()
-        }
-      }
-      currentState
+      receivers foreach sendState
     }
   }
 
@@ -45,14 +62,16 @@ trait BooleanSyncApp {
 
   def registerBroadcastReceiver(receiver: BooleanStateReceiver) {
     receivers += receiver
-    receiver.sendNewState(getCurrentState)
+    sendState(receiver)
   }
 
   def deregisterBroadcastReceiver(receiver: BooleanStateReceiver) {
     receivers -= receiver
   }
 
-  def getAppStats: BooleanSyncAppStats = synchronized { BooleanSyncAppStats(readCount, writeCount) }
+  def sendAppStats(recipient: ActorRef) {
+    recipient ! BooleanSyncAppStats(readCount, writeCount)
+  }
 }
 
 trait BooleanStateReceiver {

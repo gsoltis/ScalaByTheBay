@@ -4,6 +4,8 @@ import io.netty.channel._
 import io.netty.handler.codec.http.websocketx._
 import io.netty.handler.codec.http.{HttpHeaders, FullHttpRequest}
 import scala.Some
+import akka.actor.ActorRef
+import akka.pattern.ask
 
 object WebsocketHandler {
 
@@ -19,7 +21,7 @@ object WebsocketHandler {
     val handshakeFuture = handshaker.handshake(ctx.channel(), msg)
     // We're done with this message now, so we can release it
     msg.release()
-    ApplicationCache.getOrLookup[BooleanSyncApp](appName) match {
+    ApplicationCache.getOrLookup(appName) match {
       case Some(app) => new WebsocketHandler(handshaker, app)
       case None => new MissingAppWebsocketHandler(handshaker, handshakeFuture)
     }
@@ -42,9 +44,10 @@ class MissingAppWebsocketHandler(handshaker: WebSocketServerHandshaker, handshak
   }
 }
 
-class WebsocketHandler(handshaker: WebSocketServerHandshaker, app: BooleanSyncApp) extends SimpleChannelInboundHandler[WebSocketFrame]
+class WebsocketHandler(handshaker: WebSocketServerHandshaker, app: ActorRef) extends SimpleChannelInboundHandler[WebSocketFrame]
     with BooleanStateReceiver {
 
+  private implicit val timeout = ApplicationCache.timeout
   private var cachedContext: Option[ChannelHandlerContext] = None
 
   def channelRead0(ctx: ChannelHandlerContext, msg: WebSocketFrame) {
@@ -55,9 +58,11 @@ class WebsocketHandler(handshaker: WebSocketServerHandshaker, app: BooleanSyncAp
   }
 
   private def handleTextCommand(command: String, ctx: ChannelHandlerContext) {
+    implicit val executor = new NettyExecutionContext(ctx)
     if (command startsWith "set:") {
       val newState = command.substring("set:".length).toBoolean
-      app.setCurrentState(newState)
+      //app.setCurrentState(newState)
+      app ? SetState(newState)
     } else {
       sendText("invalid command", ctx)
     }
@@ -77,10 +82,10 @@ class WebsocketHandler(handshaker: WebSocketServerHandshaker, app: BooleanSyncAp
 
   override def handlerAdded(ctx: ChannelHandlerContext) {
     cachedContext = Some(ctx)
-    app.registerBroadcastReceiver(this)
+    app ! AddListener(this)
   }
 
   override def channelInactive(ctx: ChannelHandlerContext) {
-    app.deregisterBroadcastReceiver(this)
+    app ! RemoveListener(this)
   }
 }

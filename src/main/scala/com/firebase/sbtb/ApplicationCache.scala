@@ -1,31 +1,35 @@
 package com.firebase.sbtb
 
 import scala.collection.mutable.{Map => MutableMap}
+import akka.actor.{ActorSystem, Props, ActorRef}
+import akka.util.Timeout
+import java.util.concurrent.TimeUnit
 
 object ApplicationCache {
 
   // In your application, you probably want this to be some sort of external data store
-  private val KNOWN_APPS: Map[String, BooleanSyncApp] = Map(
-    "somaIsFoggy" -> new BooleanSyncApp {},
-    "NYCUberSurge" -> new BooleanSyncApp {},
-    "PDFToWordConverter" -> PDFToWord
+  private val KNOWN_APPS: Map[String, Props] = Map(
+    "somaIsFoggy" -> Props[BooleanSyncApp],
+    "NYCUberSurge" -> Props[BooleanSyncApp],
+    "PDFToWordConverter" -> Props[PDFToWord]
   )
 
-  private val cache: MutableMap[String, BooleanSyncApp] = MutableMap()
+  private val cache: MutableMap[String, ActorRef] = MutableMap()
+  private val system = ActorSystem("TheActorSystem")
+  val timeout = Timeout(10, TimeUnit.SECONDS)
 
-  def getOrLookup[A <: BooleanSyncApp: Manifest](name: String): Option[A] = {
+  def getOrLookup(name: String): Option[ActorRef] = {
     synchronized {
       cache.get(name) orElse {
         // In your application, you would do your query to your external store here
-        KNOWN_APPS.get(name) map { case app => cache += name -> app; app }
-      } flatMap ensureAppType[A]
-    }
-  }
-
-  private def ensureAppType[A <: BooleanSyncApp: Manifest](app: BooleanSyncApp): Option[A] = {
-    app match {
-      case correctlyTypedApp: A => Some(correctlyTypedApp)
-      case _ => None
+        KNOWN_APPS.get(name) map {
+          case appProps => {
+            val actorRef = system.actorOf(appProps)
+            cache += name -> actorRef
+            actorRef
+          }
+        }
+      }
     }
   }
 }
