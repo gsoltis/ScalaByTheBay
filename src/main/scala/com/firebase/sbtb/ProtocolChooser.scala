@@ -12,8 +12,8 @@ object ProtocolChooser extends SimpleChannelInboundHandler[FullHttpRequest] {
     msg.retain()
     if (msg.getUri endsWith ".ws") {
       // It's a websocket connection. Do the handshake and add our websocket handler
-      val handshaker = WebsocketHandler.handshake(msg, ctx)
-      ctx.pipeline().addLast("websocket-app", new WebsocketHandler(handshaker))
+      val wsHandler = WebsocketHandler.handshake(msg, ctx)
+      ctx.pipeline().addLast("websocket-app", wsHandler)
     } else if (msg.getUri endsWith ".lp") {
       // It's a long poll connection
       // Add the handler for long poll requests

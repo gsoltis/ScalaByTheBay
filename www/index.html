@@ -22,12 +22,12 @@
     };
 
     var ws = new WebsocketConnection(
-            "ws://localhost:9002/.ws",
+            "ws://localhost:9002/somaIsFoggy.ws",
             function() {
               log('Connection opened');
             },
             function(msg) {
-              var prefix = "foggy:";
+              var prefix = "state:";
               var isFoggy = msg.substring(prefix.length) === 'true';
               if (isFoggy) {
                 log("It's foggy!");
@@ -47,7 +47,7 @@
       $('#set-state').on('click', function() {
         var toSet = $('#is-foggy').is(':checked');
         log('Setting foggy: ' + toSet);
-        ws.send('setFoggy:' + toSet);
+        ws.send('set:' + toSet);
       });
     });
   </script>

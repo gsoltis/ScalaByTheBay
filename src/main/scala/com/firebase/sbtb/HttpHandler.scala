@@ -12,38 +12,37 @@ object HttpHandler extends SimpleChannelInboundHandler[FullHttpRequest] {
 
   val SOMA_METHODS = Set(HttpMethod.POST, HttpMethod.GET)
 
-  private def somaIsFoggy(ctx: ChannelHandlerContext, msg: FullHttpRequest): HttpResponse = {
+  private def runApp(app: BooleanSyncApp, ctx: ChannelHandlerContext, msg: FullHttpRequest): HttpResponse = {
     val method = msg.getMethod
+    // In a more sophisticated application, you'll likely want to do some better http route and error handling.
     if (SOMA_METHODS contains method) {
-      val booleanResult = if (method == HttpMethod.POST) {
-        val newFoggyState = msg.content().toString(CharsetUtil.UTF_8).toBoolean
-        SocialLocalWeatherApp.setFoggy(newFoggyState)
+      if (msg.getUri endsWith "marketingStats") {
+        val stats = app.getAppStats
+        val result = s"reads: ${stats.reads}\nwrites: ${stats.writes}"
+        getStringResponse(result, ctx)
       } else {
-        SocialLocalWeatherApp.getFoggy
+        val booleanResult = if (method == HttpMethod.POST) {
+          val newState = msg.content().toString(CharsetUtil.UTF_8).toBoolean
+          app.setCurrentState(newState)
+        } else {
+          app.getCurrentState
+        }
+        getBooleanResponse(booleanResult, ctx)
       }
-      getBooleanResponse(booleanResult, ctx)
-    } else {
-      get405Response
-    }
-  }
-
-  private def marketingStats(ctx: ChannelHandlerContext, msg: HttpRequest): HttpResponse = {
-    if (msg.getMethod == HttpMethod.GET) {
-      val stats = SocialLocalWeatherApp.getMarketingStats
-      val result = s"reads: ${stats.reads}\nwrites: ${stats.writes}"
-      getStringResponse(result, ctx)
     } else {
       get405Response
     }
   }
 
   def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpRequest) {
-    val response = if (msg.getUri == "/somaIsFoggy") {
-      somaIsFoggy(ctx, msg)
-    } else if (msg.getUri == "/marketingStats") {
-      marketingStats(ctx, msg)
-    } else {
-      get404Response
+    val response = msg.getUri.split("/").toList match {
+      case "" :: appName :: tail => {
+        ApplicationCache.getOrLookup[BooleanSyncApp](appName) match {
+          case Some(app) => runApp(app, ctx, msg)
+          case None => get404Response
+        }
+      }
+      case _ => get404Response
     }
     ctx.writeAndFlush(response)
   }
